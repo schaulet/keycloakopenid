@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"crypto/tls"
 )
 
 type Config struct {
@@ -18,6 +19,8 @@ type Config struct {
 	ClientID      string `json:"client_id"`
 	ClientSecret  string `json:"client_secret"`
 	KeycloakRealm string `json:"keycloak_realm"`
+	KeycloakScheme string `json:"scheme"`
+	IgnoreCertValidation string `json:"ignore_cert_validation"`
 }
 
 type keycloakAuth struct {
@@ -52,6 +55,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 }
 
 func (k *keycloakAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: k.config.IgnoreCertValidation}
 	cookie, err := req.Cookie("Authorization")
 	if err == nil && strings.HasPrefix(cookie.Value, "Bearer ") {
 		token := strings.TrimPrefix(cookie.Value, "Bearer ")
@@ -106,6 +110,7 @@ func (k *keycloakAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		token, err := k.exchangeAuthCode(req, authCode, stateBase64)
 		fmt.Printf("exchange auth code finished %+v\n", token)
 		if err != nil {
+			http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: k.config.IgnoreCertValidation}
 			http.Error(rw, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -130,6 +135,7 @@ func (k *keycloakAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		host := req.Header.Get("X-Forwarded-Host")
 		originalURL := fmt.Sprintf("%s://%s%s", scheme, host, req.RequestURI)
 
+		http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: k.config.IgnoreCertValidation}
 		http.Redirect(rw, req, originalURL, http.StatusFound)
 	}
 }
@@ -139,6 +145,7 @@ func (k *keycloakAuth) exchangeAuthCode(req *http.Request, authCode string, stat
 	var state state
 	json.Unmarshal(stateBytes, &state)
 
+	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: k.config.IgnoreCertValidation}
 	resp, err := http.PostForm("https://"+k.config.KeycloakURL+"/realms/"+k.config.KeycloakRealm+"/protocol/openid-connect/token",
 		url.Values{
 			"grant_type":    {"authorization_code"},
@@ -180,7 +187,7 @@ func (k *keycloakAuth) redirectToKeycloak(rw http.ResponseWriter, req *http.Requ
 	stateBase64 := base64.StdEncoding.EncodeToString(stateBytes)
 
 	redirectURL := url.URL{
-		Scheme: "https",
+		Scheme: k.config.KeycloakScheme,
 		Host:   k.config.KeycloakURL,
 		Path:   "/realms/" + k.config.KeycloakRealm + "/protocol/openid-connect/auth",
 		RawQuery: url.Values{
@@ -191,6 +198,7 @@ func (k *keycloakAuth) redirectToKeycloak(rw http.ResponseWriter, req *http.Requ
 		}.Encode(),
 	}
 
+	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: k.config.IgnoreCertValidation}
 	http.Redirect(rw, req, redirectURL.String(), http.StatusFound)
 }
 
@@ -201,6 +209,7 @@ func (k *keycloakAuth) verifyToken(token string) (bool, error) {
 		"token": {token},
 	}
 
+	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: k.config.IgnoreCertValidation}
 	req, err := http.NewRequest(http.MethodPost, "https://"+k.config.KeycloakURL+"/realms/"+k.config.KeycloakRealm+"/protocol/openid-connect/token/introspect", strings.NewReader(data.Encode()))
 	if err != nil {
 		return false, err
